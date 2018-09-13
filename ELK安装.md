@@ -107,11 +107,29 @@ http.port: 9200增加新的参数，这样head插件可以访问es (5.x版本，
 http.cors.enabled: true
 http.cors.allow-origin: "*"启动elasticsearch服务
 ```
-
-
+配置集群:  
+集群之间通讯默认端口是9300. 集群名相同，则属于一个集群，另外为了防止脑裂，集群的最小数量，最好配置为集群节点总数/2 + 1
+```
+vim config/elasticsearch.yml
+cluster.name: my-es
+node.name: node-1
+network.host: 192.168.19.141
+http.port: 9200
+transport.tcp.port: 9300
+discovery.zen.ping.unicast.hosts: ["192.168.19.141","192.168.19.142","192.168.19.143"]
+discovery.zen.minimum_master_nodes: 2
+#避免出现跨域问题
+http.cors.enabled: true
+http.cors.allow-origin: "*"
+第二个、第三个节点的配置只需修改成对应的ip即可。
+```
 ### 运行elasticsearch:
 对于yum安装的elasticsearch， 通过服务启动，启动脚本会自动修改limit，虚拟机存储大小等配置，可以不用设置系统的limit权限，如果是下载包安装的，没有启动脚本，手工启动时，需要以普通用户sudo启动，
 - 普通用户启动  
+ES有执行脚本的能力，因安全因素，不能在root用户下运行，强行运行会报如下错误：
+org.elasticsearch.bootstrap.StartupException: java.lang.RuntimeException: can not run elasticsearch as root
+解决方案：
+如果是用yum安装,会在 init.d/下自动创建启动脚本，启动时自动指定普通用户启动。
 如果不是以yum安装的,需要创建用户和用户组:  
 groupadd elasticsearch  
 useradd elasticsearch -g elasticsearch -p elasticsearch  
@@ -237,8 +255,358 @@ sudo systemctl start filebeat
 sudo systemctl stop filebeat
 ```
 
+## 扩展应用:
+
+elasticsearch,底层依据于lucene搜索引擎,提供一系列基于restful的上层接口,可以方便的搭建一个分布式的全文检索系统,这里我们安装一个中文分词plugin,搭建一个基于中文的全文检索系统, 前提已经搭好一个node或一个cluster.
+
+- elasticsearch 全文检索
+    - 安装插件  
+    中文分词插件是Ik, 关于IK分词器的介绍不再多少，一言以蔽之，IK分词是目前使用非常广泛分词效果比较好的中文分词器。做ES开发的，中文分词十有八九使用的都是IK分词器。
+elasticsearch-plugin install https://github.com/medcl/elasticsearch-analysis-ik/releases/download/v6.4.0/elasticsearch-analysis-ik-6.4.0.zip  
+以普通用户运行失败,以root用户安装可以:   
+/usr/share/elasticsearch/bin/elasticsearch-plugin install https://github.com/medcl/elasticsearch-analysis-ik/releases/download/v6.4.0/elasticsearch-analysis-ik-6.4.0.zip  
+安装完插件后,需要重新启动elasticsearch.
+    - 创建索引  
+curl -XPUT http://192.168.1.234:9200/index
+    - 创建mapping  
+curl -H 'Content-Type:application/json' http://192.168.1.234:9200/index/fulltext/_mapping -d'
+{
+        "properties": {
+            "content": {
+                "type": "text",
+                "analyzer": "ik_max_word",
+                "search_analyzer": "ik_max_word"
+            }
+        }
+}'
+
+    - 分词  
+ik_max_word: 会将文本做最细粒度的拆分，比如会将“中华人民共和国国歌”拆分为“中华人民共和国,中华人民,中华,华人,人民共和国,人民,人,民,共和国,共和,和,国国,国歌”，会穷尽各种可能的组合；  
+ik_smart: 会做最粗粒度的拆分，比如会将“中华人民共和国国歌”拆分为“中华人民共和国,国歌”。  
+```
+curl -H 'Content-Type:application/json' 'http://192.168.1.234:9200/index/_analyze?pretty=true' -d '
+{
+"text":"中华人民共和国",
+"analyzer" : "ik_max_word"
+}'
+
+curl -XPOST http://localhost:9200/index/fulltext/1 -H 'Content-Type:application/json' -d'
+{"content":"美国留给伊拉克的是个烂摊子吗"}
+'
+curl -XPOST http://localhost:9200/index/fulltext/2 -H 'Content-Type:application/json' -d'
+{"content":"公安部：各地校车将享最高路权"}
+'
+curl -XPOST http://localhost:9200/index/fulltext/3 -H 'Content-Type:application/json' -d'
+{"content":"中韩渔警冲突调查：韩警平均每天扣1艘中国渔船"}
+'
+curl -XPOST http://localhost:9200/index/fulltext/4 -H 'Content-Type:application/json' -d'
+{"content":"中国驻洛杉矶领事馆遭亚裔男子枪击 嫌犯已自首"}
+'
+```
+
+测试分词效果:
+
+`curl -XPOST "http://localhost:9200/index/_analyze?analyzer=ik_max_word&text=中华人民共和国"`
+分词结果:
+```
+   {
+    "tokens": [{
+        "token": "中华人民共和国",
+        "start_offset": 0,
+        "end_offset": 7,
+        "type": "CN_WORD",
+        "position": 0
+    }, {
+        "token": "中华人民",
+        "start_offset": 0,
+        "end_offset": 4,
+        "type": "CN_WORD",
+        "position": 1
+    }, {
+        "token": "中华",
+        "start_offset": 0,
+        "end_offset": 2,
+        "type": "CN_WORD",
+        "position": 2
+    }, {
+        "token": "华人",
+        "start_offset": 1,
+        "end_offset": 3,
+        "type": "CN_WORD",
+        "position": 3
+    }, {
+        "token": "人民共和国",
+        "start_offset": 2,
+        "end_offset": 7,
+        "type": "CN_WORD",
+        "position": 4
+    }, {
+        "token": "人民",
+        "start_offset": 2,
+        "end_offset": 4,
+        "type": "CN_WORD",
+        "position": 5
+    }, {
+        "token": "共和国",
+        "start_offset": 4,
+        "end_offset": 7,
+        "type": "CN_WORD",
+        "position": 6
+    }, {
+        "token": "共和",
+        "start_offset": 4,
+        "end_offset": 6,
+        "type": "CN_WORD",
+        "position": 7
+    }, {
+        "token": "国",
+        "start_offset": 6,
+        "end_offset": 7,
+        "type": "CN_CHAR",
+        "position": 8
+    }, {
+        "token": "国歌",
+        "start_offset": 7,
+        "end_offset": 9,
+        "type": "CN_WORD",
+        "position": 9
+    }]
+}
+```
+
+使用ik_smart分词:
+
+`curl -XPOST "http://localhost:9200/index/_analyze?analyzer=ik_smart&text=中华人民共和国"`
+分词结果:
+```
+{
+    "tokens": [{
+        "token": "中华人民共和国",
+        "start_offset": 0,
+        "end_offset": 7,
+        "type": "CN_WORD",
+        "position": 0
+    }, {
+        "token": "国歌",
+        "start_offset": 7,
+        "end_offset": 9,
+        "type": "CN_WORD",
+        "position": 1
+    }]
+}
+```
 
 
 
 
+    - 拼音分词
+    pinyin分词器的下载地址: 
+https://github.com/medcl/elasticsearch-analysis-pinyin
 
+测试拼音分词:
+
+curl -XPOST "http://localhost:9200/index/_analyze?analyzer=pinyin&text=张学友"
+分词结果:
+
+{
+    "tokens": [{
+        "token": "zhang",
+        "start_offset": 0,
+        "end_offset": 1,
+        "type": "word",
+        "position": 0
+    }, {
+        "token": "xue",
+        "start_offset": 1,
+        "end_offset": 2,
+        "type": "word",
+        "position": 1
+    }, {
+        "token": "you",
+        "start_offset": 2,
+        "end_offset": 3,
+        "type": "word",
+        "position": 2
+    }, {
+        "token": "zxy",
+        "start_offset": 0,
+        "end_offset": 3,
+        "type": "word",
+        "position": 3
+    }]
+}
+
+安装过程和IK一样，下载、打包、加入ES。这里不在重复上述步骤，给出最后配置截图 
+
+
+五、IK+pinyin分词配置
+5.1创建索引与分析器设置
+创建一个索引，并设置index分析器相关属性:
+
+curl -XPUT "http://localhost:9200/medcl/" -d'
+{
+    "index": {
+        "analysis": {
+            "analyzer": {
+                "ik_pinyin_analyzer": {
+                    "type": "custom",
+                    "tokenizer": "ik_smart",
+                    "filter": ["my_pinyin", "word_delimiter"]
+                }
+            },
+            "filter": {
+                "my_pinyin": {
+                    "type": "pinyin",
+                    "first_letter": "prefix",
+                    "padding_char": " "
+                }
+            }
+        }
+    }
+}'
+创建一个type并设置mapping:
+
+curl -XPOST http://localhost:9200/medcl/folks/_mapping -d'
+{
+    "folks": {
+        "properties": {
+            "name": {
+                "type": "keyword",
+                "fields": {
+                    "pinyin": {
+                        "type": "text",
+                        "store": "no",
+                        "term_vector": "with_positions_offsets",
+                        "analyzer": "ik_pinyin_analyzer",
+                        "boost": 10
+                    }
+                }
+            }
+        }
+    }
+}'
+5.2索引测试文档
+索引2份测试文档。 
+文档1:
+
+curl -XPOST http://localhost:9200/medcl/folks/andy -d'{"name":"刘德华"}'
+文档2:
+
+curl -XPOST http://localhost:9200/medcl/folks/tina -d'{"name":"中华人民共和国国歌"}'
+5.3测试(1)拼音分词
+下面四条命命令都可以匹配”刘德华”
+
+curl -XPOST "http://localhost:9200/medcl/folks/_search?q=name.pinyin:liu"
+
+curl -XPOST "http://localhost:9200/medcl/folks/_search?q=name.pinyin:de"
+
+curl -XPOST "http://localhost:9200/medcl/folks/_search?q=name.pinyin:hua"
+
+curl -XPOST "http://localhost:9200/medcl/folks/_search?q=name.pinyin:ldh"
+5.4测试(2)IK分词测试
+curl -XPOST "http://localhost:9200/medcl/_search?pretty" -d'
+{
+  "query": {
+    "match": {
+      "name.pinyin": "国歌"
+    }
+  },
+  "highlight": {
+    "fields": {
+      "name.pinyin": {}
+    }
+  }
+}'
+返回结果:
+
+{
+  "took" : 2,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 1,
+    "max_score" : 16.698704,
+    "hits" : [
+      {
+        "_index" : "medcl",
+        "_type" : "folks",
+        "_id" : "tina",
+        "_score" : 16.698704,
+        "_source" : {
+          "name" : "中华人民共和国国歌"
+        },
+        "highlight" : {
+          "name.pinyin" : [
+            "<em>中华人民共和国</em><em>国歌</em>"
+          ]
+        }
+      }
+    ]
+  }
+}
+说明IK分词器起到了效果。
+
+5.3测试(4)pinyin+ik分词测试：
+curl -XPOST "http://localhost:9200/medcl/_search?pretty" -d'
+{
+  "query": {
+    "match": {
+      "name.pinyin": "zhonghua"
+    }
+  },
+  "highlight": {
+    "fields": {
+      "name.pinyin": {}
+    }
+  }
+}'
+返回结果:
+
+{
+  "took" : 3,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 5,
+    "successful" : 5,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : 2,
+    "max_score" : 5.9814634,
+    "hits" : [
+      {
+        "_index" : "medcl",
+        "_type" : "folks",
+        "_id" : "tina",
+        "_score" : 5.9814634,
+        "_source" : {
+          "name" : "中华人民共和国国歌"
+        },
+        "highlight" : {
+          "name.pinyin" : [
+            "<em>中华人民共和国</em>国歌"
+          ]
+        }
+      },
+      {
+        "_index" : "medcl",
+        "_type" : "folks",
+        "_id" : "andy",
+        "_score" : 2.2534127,
+        "_source" : {
+          "name" : "刘德华"
+        },
+        "highlight" : {
+          "name.pinyin" : [
+            "<em>刘德华</em>"
+          ]
+        }
+      }
+    ]
+  }
+}
+ 
