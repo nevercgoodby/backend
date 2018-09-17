@@ -610,3 +610,295 @@ curl -XPOST "http://localhost:9200/medcl/_search?pretty" -d'
   }
 }
  
+
+ 
+
+DELETE  /accounts
+DELETE /pinyin
+DELETE /pinyin2
+DELETE /pinyin3
+DELETE /pinyin4
+DELETE /index
+
+DELETE /accounts
+
+GET /accounts
+
+PUT /accounts
+{
+  "mappings": {
+    "person": {
+      "properties": {
+        "user": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_max_word"
+        },
+        "title": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_max_word"
+        },
+        "desc": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_max_word"
+        }
+      }
+    }
+  }
+}
+
+POST /accounts/person/
+{
+  "user": "赵六",
+  "title": "工程师",
+  "desc": "软件开发"
+}
+
+GET accounts/person/_search
+
+
+GET /accounts/person/_search
+{
+  "query" : { "match" : { "title" : "张" }}
+}
+
+#中文分词测试
+DELETE /index
+
+PUT /index
+
+POST /index/fulltext/_mapping
+{
+  "properties": {
+    "content":{
+      "type" :"text",
+      "analyzer": "ik_max_word",
+      "search_analyzer": "ik_max_word"
+    }
+  }
+}
+
+POST /index/_analyze?pretty=true
+{
+  "text": "美国留给伊拉克的是个烂摊子吗",
+  "analyzer": "ik_max_word"
+}
+
+POST /index/_analyze?pretty=true
+{
+  "text": "美国留给伊拉克的是个烂摊子吗",
+  "analyzer": "ik_smart"
+}
+
+# 拼音分词
+DELETE /pinyin
+PUT /pinyin/
+
+
+PUT /pinyin/
+{
+    "index" : {
+        "analysis" : {
+            "analyzer" : {
+                "pinyin_analyzer" : {
+                    "tokenizer" : "my_pinyin"
+                    }
+            },
+            "tokenizer" : {
+                "my_pinyin" : {
+                    "type" : "pinyin",
+                    "keep_separate_first_letter" : true,
+                    "keep_full_pinyin" : true,
+                    "keep_original" : true,
+                    "limit_first_letter_length" : 16,
+                    "lowercase" : true,
+                    "remove_duplicated_term" : true
+                }
+            }
+        }
+    }
+}
+
+
+GET /pinyin/_analyze
+{
+  "text": ["刘德华"],
+  "analyzer": "pinyin_analyzer"
+}
+
+POST /pinyin/folks/andy
+{
+  "name": "刘德华"
+}
+
+POST /pinyin/folks/_mapping
+{
+    "folks": {
+        "properties": {
+            "name": {
+                "type": "keyword",
+                "fields": {
+                    "pinyin": {
+                        "type": "text",
+                        "store": false,
+                        "term_vector": "with_offsets",
+                        "analyzer": "pinyin_analyzer",
+                        "boost": 10
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+POST /pinyin/folks/andy
+{
+  "name": "刘德华"
+}
+
+GET /pinyin/folks/andy
+
+GET /pinyin/folks/_search?q=name:%E5%88%98%E5%BE%B7%E5%8D%8E
+
+GET /pinyin/folks/_search?q=name.pinyin:%e5%88%98%e5%be%b7
+
+GET /pinyin/folks/_search?q=name.pinyin:liu
+GET /pinyin/folks/_search?q=name.pinyin:de
+GET /pinyin/folks/_search?q=name.pinyin:hua
+
+GET /pinyin/folks/_search?q=name.pinyin:de+hua
+
+
+PUT /pinyin2/ 
+{
+    "index" : {
+        "analysis" : {
+            "analyzer" : {
+                "user_name_analyzer" : {
+                    "tokenizer" : "whitespace",
+                    "filter" : "pinyin_first_letter_and_full_pinyin_filter"
+                }
+            },
+            "filter" : {
+                "pinyin_first_letter_and_full_pinyin_filter" : {
+                    "type" : "pinyin",
+                    "keep_first_letter" : true,
+                    "keep_full_pinyin" : false,
+                    "keep_none_chinese" : true,
+                    "keep_original" : false,
+                    "limit_first_letter_length" : 16,
+                    "lowercase" : true,
+                    "trim_whitespace" : true,
+                    "keep_none_chinese_in_first_letter" : true
+                }
+            }
+        }
+    }
+}
+POST /pinyin2/folks/andy
+{
+  "name": "刘德华"
+}
+GET /pinyin2/_analyze
+{
+  "text": ["刘德华 张学友 郭富城 黎明 四大天王"],
+  "analyzer": "user_name_analyzer"
+}
+
+
+PUT /pinyin3/
+{
+  "index": {
+    "analysis": {
+      "analyzer": {
+        "pinyin_analyzer": {
+          "tokenizer": "my_pinyin"
+        }
+      },
+      "tokenizer": {
+        "my_pinyin": {
+          "type": "pinyin",
+          "keep_first_letter": false,
+          "keep_separate_first_letter": false,
+          "keep_full_pinyin": true,
+          "keep_original": false,
+          "limit_first_letter_length": 16,
+          "lowercase": true
+        }
+      }
+    }
+  }
+}
+POST /pinyin3/folks/andy
+{
+  "name": "刘德华"
+}
+GET /pinyin3/folks/_search
+
+GET /pinyin3/folks/_search
+{
+  "query": {
+    "match_phrase": {
+      "name.pinyin": "刘德华"
+    }
+  }
+}
+
+PUT /pinyin4/
+{
+  "index": {
+    "analysis": {
+      "analyzer": {
+        "pinyin_analyzer": {
+          "tokenizer": "my_pinyin"
+        }
+      },
+      "tokenizer": {
+        "my_pinyin": {
+          "type": "pinyin",
+          "keep_first_letter": false,
+          "keep_separate_first_letter": true,
+          "keep_full_pinyin": false,
+          "keep_original": false,
+          "limit_first_letter_length": 16,
+          "lowercase": true
+        }
+      }
+    }
+  }
+}
+
+POST /pinyin4/folks/andy
+{
+  "name": "刘德华"
+}
+
+GET /pinyin4/folks/_search
+{
+  "query": {
+    "match_phrase": {
+      "name.pinyin": "刘德h"
+    }
+  }
+}
+
+GET /pinyin4/folks/_search
+{
+  "query": {
+    "match_phrase": {
+      "name.pinyin": "刘dh"
+    }
+  }
+}
+
+GET /pinyin4/folks/_search
+{
+  "query": {
+    "match_phrase": {
+      "name.pinyin": "dh"
+    }
+  }
+}
